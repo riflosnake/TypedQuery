@@ -1,0 +1,14 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/Solution Items/">
+    <File Path="LICENSE.txt" />
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="src/TypedQuery.Abstractions/TypedQuery.Abstractions.csproj" />
+  <Project Path="src/TypedQuery.EntityFrameworkCore/TypedQuery.EntityFrameworkCore.csproj" />
+  <Project Path="src/TypedQuery/TypedQuery.csproj" />
+</Solution>

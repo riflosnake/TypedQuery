@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net6.0;net7.0;net8.0;net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    
+    <PackageId>TypedQuery</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Flori Batusha</Authors>
+    <Company>Flori Batusha</Company>
+    <Description>TypedQuery - A fluent, type-safe query builder with Dapper execution for .NET. Batch multiple queries into a single database call.</Description>
+    <PackageTags>typed;fluent;query;sql;database;dapper;batch;performance</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/riflosnake/TypedQuery</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/riflosnake/TypedQuery</PackageProjectUrl>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RootNamespace>TypedQuery</RootNamespace>
+    <AssemblyName>TypedQuery</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TypedQuery.EntityFrameworkCore" />
+    <InternalsVisibleTo Include="TypedQuery.Benchmarks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TypedQuery.Abstractions\TypedQuery.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" Version="2.1.35" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

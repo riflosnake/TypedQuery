@@ -1,0 +1,64 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net6.0;net7.0;net8.0;net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    
+    <PackageId>TypedQuery.EntityFrameworkCore</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Flori Batusha</Authors>
+    <Company>Flori Batusha</Company>
+    <Description>Entity Framework Core integration for TypedQuery - Build type-safe LINQ queries and batch them with raw SQL in a single database call</Description>
+    <PackageTags>typed;fluent;query;sql;database;efcore;entity-framework-core;linq;batch</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/riflosnake/TypedQuery</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/riflosnake/TypedQuery</PackageProjectUrl>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RootNamespace>TypedQuery.EntityFrameworkCore</RootNamespace>
+    <AssemblyName>TypedQuery.EntityFrameworkCore</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TypedQuery.Abstractions\TypedQuery.Abstractions.csproj" />
+    <ProjectReference Include="..\TypedQuery\TypedQuery.csproj" />
+  </ItemGroup>
+
+  <!-- EF Core 6.x for .NET 6 -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net6.0'">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="6.0.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="6.0.*" />
+  </ItemGroup>
+
+  <!-- EF Core 7.x for .NET 7 -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net7.0'">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="7.0.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="7.0.*" />
+  </ItemGroup>
+
+  <!-- EF Core 8.x for .NET 8 -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.*" />
+  </ItemGroup>
+
+  <!-- EF Core 9.x for .NET 9 -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.*" />
+  </ItemGroup>
+
+  <!-- EF Core 10.x for .NET 10 -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.*-*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.*-*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
