@@ -1,0 +1,90 @@
+name: Release NuGet Packages
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0, v1.1.0, etc.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.1.0)'
+        required: true
+        type: string
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: |
+          6.0.x
+          7.0.x
+          8.0.x
+          9.0.x
+          
+    - name: Determine version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          # Extract version from tag (v1.0.0 -> 1.0.0)
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Update version in project files
+      run: |
+        VERSION=${{ steps.version.outputs.VERSION }}
+        sed -i "s/<Version>.*<\/Version>/<Version>$VERSION<\/Version>/g" src/TypedQuery.Abstractions/TypedQuery.Abstractions.csproj
+        sed -i "s/<Version>.*<\/Version>/<Version>$VERSION<\/Version>/g" src/TypedQuery/TypedQuery.csproj
+        sed -i "s/<Version>.*<\/Version>/<Version>$VERSION<\/Version>/g" src/TypedQuery.EntityFrameworkCore/TypedQuery.EntityFrameworkCore.csproj
+        
+    - name: Restore
+      run: dotnet restore
+      
+    - name: Build
+      run: dotnet build -c Release --no-restore
+      
+    - name: Test
+      run: dotnet run --project src/TypedQuery.Tests/TypedQuery.Tests.csproj --no-build -c Release
+      
+    - name: Pack
+      run: |
+        mkdir -p artifacts
+        dotnet pack src/TypedQuery.Abstractions/TypedQuery.Abstractions.csproj -c Release --no-build -o artifacts
+        dotnet pack src/TypedQuery/TypedQuery.csproj -c Release --no-build -o artifacts
+        dotnet pack src/TypedQuery.EntityFrameworkCore/TypedQuery.EntityFrameworkCore.csproj -c Release --no-build -o artifacts
+        
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: nuget-packages
+        path: artifacts/*.nupkg
+        
+    - name: Publish to NuGet.org
+      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      run: |
+        dotnet nuget push artifacts/*.nupkg \
+          --api-key ${{ secrets.NUGET_API_KEY }} \
+          --source https://api.nuget.org/v3/index.json \
+          --skip-duplicate
+          
+    - name: Create GitHub Release
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: artifacts/*.nupkg
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

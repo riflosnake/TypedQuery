@@ -13,7 +13,7 @@ namespace TypedQuery.Benchmarks.Benchmarks;
 /// Measures the benefit of EF Core SQL caching in TypedQuery.
 /// 
 /// Key scenarios:
-/// 1. Cold (first call) - EF Core compiles LINQ ? SQL
+/// 1. Cold (first call) - EF Core compiles LINQ > SQL
 /// 2. Warm (cached) - Uses cached SQL template, skips EF Core
 /// 3. Comparison with direct EF Core execution
 /// </summary>
