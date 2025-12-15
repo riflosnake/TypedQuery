@@ -8,7 +8,9 @@
     <File Path="LICENSE.txt" />
     <File Path="README.md" />
   </Folder>
+  <Project Path="benchmarks/TypedQuery.Benchmarks/TypedQuery.Benchmarks.csproj" />
   <Project Path="src/TypedQuery.Abstractions/TypedQuery.Abstractions.csproj" />
   <Project Path="src/TypedQuery.EntityFrameworkCore/TypedQuery.EntityFrameworkCore.csproj" />
+  <Project Path="src/TypedQuery.Tests/TypedQuery.Tests.csproj" />
   <Project Path="src/TypedQuery/TypedQuery.csproj" />
 </Solution>
