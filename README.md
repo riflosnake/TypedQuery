@@ -188,10 +188,6 @@ Implications:
 
 Contributions are welcome! This library is in active development.
 
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
 ## Acknowledgments
 
 - Built on top of [Dapper](https://github.com/DapperLib/Dapper) for query execution
