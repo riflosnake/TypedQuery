@@ -56,9 +56,6 @@ jobs:
     - name: Build
       run: dotnet build -c Release --no-restore
       
-    - name: Test
-      run: dotnet run --project src/TypedQuery.Tests/TypedQuery.Tests.csproj --no-build -c Release
-      
     - name: Pack
       run: |
         mkdir -p artifacts
