@@ -34,9 +34,18 @@ internal static class SqlBatchBuilder
         {
             var definition = BuildMethodCache.InvokeBuild(item.QueryInstance, context);
 
-            RewriteParametersInPlace(
-                sql, definition.Sql, definition.Parameters, queryIndex,
-                allParameters, factory);
+            if (definition.AnonymousParameters != null)
+            {
+                RewriteAnonymousParametersInPlace(
+                    sql, definition.Sql, definition.AnonymousParameters!, queryIndex,
+                    allParameters, factory);
+            }
+            else
+            {
+                RewriteParametersInPlace(
+                    sql, definition.Sql, definition.Parameters, queryIndex,
+                    allParameters, factory);
+            }
 
             sql.Append(";\n");
 
@@ -47,6 +56,56 @@ internal static class SqlBatchBuilder
         }
 
         return new SqlBatch(sql.ToString(), allParameters, resultTypes, queryTypes);
+    }
+
+    /// <summary>
+    /// Rewrites parameter names for anonymous object parameters.
+    /// Converts anonymous object properties to provider-specific DbParameters with unique names.
+    /// </summary>
+    private static void RewriteAnonymousParametersInPlace(
+        StringBuilder sql,
+        string querySql,
+        object anonymousParams,
+        int queryIndex,
+        List<DbParameter> allParameters,
+        DbProviderFactory factory)
+    {
+        var paramDict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        
+        foreach (var prop in anonymousParams.GetType().GetProperties())
+        {
+            paramDict[prop.Name] = prop.GetValue(anonymousParams);
+        }
+
+        if (paramDict.Count == 0)
+        {
+            sql.Append(querySql);
+            return;
+        }
+
+        var modifiedSql = querySql;
+
+        foreach (var kvp in paramDict)
+        {
+            var originalName = kvp.Key;
+            var value = kvp.Value;
+
+            var paramNameInSql = originalName.StartsWith('@') ? originalName : $"@{originalName}";
+            var cleanName = originalName.TrimStart('@', ':', '?');
+            var newName = $"@tql{queryIndex}_{cleanName}";
+
+            modifiedSql = modifiedSql.Replace(paramNameInSql, newName);
+
+            var p = factory.CreateParameter()
+                ?? throw new InvalidOperationException("Failed to create DbParameter");
+
+            p.ParameterName = newName;
+            p.Value = value ?? DBNull.Value;
+
+            allParameters.Add(p);
+        }
+
+        sql.Append(modifiedSql);
     }
 
     /// <summary>

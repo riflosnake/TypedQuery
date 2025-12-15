@@ -49,8 +49,6 @@ var addresses = result.GetList<AddressDto>();
 
 This drives developers toward cleaner code while improving performance when multiple independent queries are needed together and database roundtrips are expensive.
 
-**For single queries, avoid the overhead (negligible but measurable).**
-
 ## Installation
 
 ```bash
@@ -74,7 +72,7 @@ public class GetUserById(int id) : ITypedQuery<UserDto>
     {
         return new QueryDefinition(
             "SELECT Id, Name, Email FROM Users WHERE Id = @id",
-            [new SqlParameter("@id", id)]);
+            new { id });
     }
 }
 ```
@@ -136,88 +134,67 @@ var products = result.GetList<ProductDto>();
 | **Single Roundtrip** | Multiple queries in one database call |
 | **Type-Safe** | Queries are classes with typed results |
 | **Clean Code** | Structured convention, no SQL string concatenation |
-| **Performance** | 3–11×+ faster under network latency (see below) |
+| **SQL Caching** | EF Core queries compiled once, reused with Dapper |
+| **Performance** | 2.5-3× faster than sequential EF Core (see benchmarks) |
 
 ## ⚡ Performance
 
-> **TL;DR:** TypedQuery RawSQL mode matches Dapper performance. TypedQuery EF Core mode has significant overhead on localhost but wins with network latency due to single-roundtrip architecture.
+### Key Results (SQLite in-memory, .NET 8.0)
 
-### Localhost Benchmarks (SQLite in-memory, ~0ms latency)
+| Scenario | Time | vs EF Core Direct | Memory |
+|----------|------|-------------------|--------|
+| **EF Core Direct** | 71 μs | baseline | 18.6 KB |
+| **TypedQuery EF Core (Warm/Cached)** | 26 μs | **2.7× faster** ✅ | 9.6 KB |
+| **TypedQuery Raw SQL** | 28 μs | 2.5× faster | 10.1 KB |
+| **TypedQuery EF Core (Cold)** | 808 μs | 11× slower | 95.5 KB |
 
-#### RawSQL Mode Performance
+### Batched Queries (5 queries)
 
-TypedQuery RawSQL mode is for users writing raw SQL queries (like Dapper users):
+| Scenario | Time | Speedup | Memory |
+|----------|------|---------|--------|
+| **EF Core Sequential** | 373 μs | baseline | 88.7 KB |
+| **TypedQuery Batched (Cached)** | 132 μs | **2.8× faster** ✅ | 45.7 KB |
 
-| Scenario | TypedQuery RawSQL | Dapper | Overhead |
-|----------|-------------------|--------|----------|
-| **Single Query** | 536 μs | 530 μs | +1% |
-| **5 Queries Batched** | 123 μs | 123 μs | +0.5% |
-| **10 Queries Batched** | 264 μs | 253 μs | +4% |
+### How It Works
 
-**Conclusion:** RawSQL mode has negligible overhead vs Dapper.
+TypedQuery uses a **dual-mode execution model**:
 
-#### EF Core Mode Performance
+1. **First Call (Cold):** EF Core compiles LINQ → SQL, TypedQuery caches the template
+2. **Subsequent Calls (Warm):** Skips EF Core entirely, executes via Dapper with cached SQL
 
-TypedQuery EF Core mode is for users wanting to write LINQ queries but batch them:
+This means:
+- ❄️ **Cold start:** ~800μs overhead (one-time per query type)
+- 🔥 **Warm/Cached:** **2.7× faster than EF Core** with 50% less memory
 
-| Scenario | TypedQuery EF Core | EF Core Sequential | Result |
-|----------|-------------------|-------------------|--------|
-| **Single Query** | N/A (not intended use) | 970 μs | - |
-| **5 Queries Batched** | 5,326 μs | 416 μs | **12.8× slower** |
-| **10 Queries Batched** | 10,815 μs | 799 μs | **13.5× slower** |
+### With Network Latency
 
-**Conclusion:** On localhost, EF Core mode has multi-millisecond CPU overhead from the interceptor-based SQL capture mechanism. **This is slower than just running EF Core queries sequentially.**
+The benefits multiply with real-world network latency:
 
-**Why the overhead?**
-- Each LINQ query is executed through EF Core to capture the generated SQL (~1ms per query)
-- Parameter cloning and batching adds cost
-- On localhost, this CPU cost dominates because network latency is ~0ms
+| Network Latency | EF Core Sequential (5 queries) | TypedQuery Batched | Speedup |
+|-----------------|--------------------------------|-------------------|---------|
+| 0ms (localhost) | 373 μs | 132 μs | **2.8×** |
+| 5ms (cloud DB) | ~25 ms | ~5 ms | **5×** |
+| 10ms (cross-region) | ~50 ms | ~10 ms | **5×** |
+| 20ms (VPN/distant) | ~100 ms | ~20 ms | **5×** |
 
-### Real-World Performance (with network latency)
+### Benchmark Details
 
-**Critical Context:** The localhost benchmarks above are misleading because they don't include network latency. In production where database round-trips can have meaningful overhead, TypedQuery's single-roundtrip architecture shines.
+```
+BenchmarkDotNet v0.14.0, Windows 11
+AMD Ryzen 5 5600U with Radeon Graphics, 6 cores
+.NET 8.0.22, X64 RyuJIT AVX2
 
-#### RawSQL Mode with Network Latency
+| Method                             | Mean      | Ratio | Allocated |
+|----------------------------------- |----------:|------:|----------:|
+| EfCore_Direct                      |  70.97 μs |  1.00 |  18.61 KB |
+| TypedQuery_EfCore_Warm             |  26.44 μs |  0.37 |   9.58 KB |
+| TypedQuery_RawSql                  |  28.10 μs |  0.40 |  10.09 KB |
+| TypedQuery_EfCore_Cold             | 808.17 μs | 11.39 |  95.46 KB |
+| TypedQuery_EfCore_Batched_5Queries | 131.98 μs |  1.86 |  45.74 KB |
+| EfCore_Sequential_5Queries         | 372.89 μs |  5.25 |  88.74 KB |
+```
 
-RawSQL mode stays close to Dapper (both use single roundtrip):
-
-| Network Latency | Sequential Dapper | TypedQuery RawSQL Batched | Speedup |
-|-----------------|-------------------|---------------------------|---------|
-| 0ms (localhost) | 412 μs | 123 μs | 3.4× faster |
-| 5ms (cloud DB) | ~25 ms | ~5 ms | 5× faster |
-| 10ms | ~50 ms | ~10 ms | 5× faster |
-
-#### EF Core Mode with Network Latency
-
-This is where the story changes - the fixed CPU overhead gets amortized by network savings:
-
-**5 Queries Example:**
-
-| Network Latency | EF Core Sequential | TypedQuery EF Core | Result |
-|-----------------|--------------------|--------------------|--------|
-| 0ms (localhost) | 416 μs | 5,326 μs | **12.8× slower** ❌ |
-| 5ms (cloud DB) | 27.1 ms | 9.75 ms | **2.8× faster** ✅ |
-| 10ms (cross-region) | 52.1 ms | 14.75 ms | **3.5× faster** ✅ |
-| 20ms (VPN/distant) | 102.1 ms | 24.75 ms | **4.1× faster** ✅ |
-
-**10 Queries Example:**
-
-| Network Latency | EF Core Sequential | TypedQuery EF Core | Result |
-|-----------------|--------------------|--------------------|--------|
-| 0ms (localhost) | 799 μs | 10,815 μs | **13.5× slower** ❌ |
-| 5ms (cloud DB) | 58.0 ms | 15.8 ms | **3.7× faster** ✅ |
-| 10ms (cross-region) | 108.0 ms | 20.8 ms | **5.2× faster** ✅ |
-| 20ms (VPN/distant) | 208.0 ms | 30.8 ms | **6.7× faster** ✅ |
-
-### Key Insights
-
-1. **RawSQL Mode:** Matches Dapper, great for raw SQL users who want typed organization
-2. **EF Core Mode on Localhost:** Slower than native EF Core (10-15ms overhead for 5-10 queries)
-3. **EF Core Mode on Cloud:** Faster than native EF Core (3-7× speedup with typical latency)
-4. **The Trade-off:** Fixed CPU cost vs variable network cost
-
-**See [benchmarks/BENCHMARK_RESULTS.md](benchmarks/BENCHMARK_RESULTS.md) for detailed analysis.**
-
+**See [benchmarks/](benchmarks/) for full benchmark code and results.**
 
 ---
 
@@ -227,11 +204,39 @@ This is where the story changes - the fixed CPU overhead gets amortized by netwo
 |---------|-------------|
 | `TypedQuery.Abstractions` | Core interfaces (`ITypedQuery<T>`) |
 | `TypedQuery` | Query execution with Dapper |
-| `TypedQuery.EntityFrameworkCore` | EF Core integration |
+| `TypedQuery.EntityFrameworkCore` | EF Core integration with SQL caching |
+
+## How SQL Caching Works
+
+When you use EF Core queries with TypedQuery:
+
+```csharp
+// First call: EF Core compiles LINQ → SQL, template cached
+var result1 = await db.ToTypedQuery()
+    .Add(new GetProductById(1))  // Compiles, caches
+    .ExecuteAsync();
+
+// Subsequent calls: Uses cached SQL, executes via Dapper
+var result2 = await db.ToTypedQuery()
+    .Add(new GetProductById(999))  // Cache hit! No EF Core
+    .ExecuteAsync();
+```
+
+**What gets cached:**
+- SQL template
+- Parameter metadata (names, types, positions)
+
+**What's fresh each call:**
+- Parameter values (read from query instance fields via reflection)
+
+**How parameter binding works:**
+- EF Core parameters are named like `@__fieldName_0`
+- TypedQuery extracts the field name from the parameter name
+- This enables reliable binding even when parameter values are identical
 
 ## Contributing
 
-Contributions are welcome! This library is in active development and there's room for performance improvements, especially in the EF Core query capture mechanism.
+Contributions are welcome! This library is in active development.
 
 ## License
 

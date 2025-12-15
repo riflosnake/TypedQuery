@@ -122,14 +122,6 @@ internal static class DapperExecutionHelper
         // Since we need async/await, we'll create the delegate differently
         // We'll return a function that does the work
         
-        var toListMethod = typeof(Enumerable)
-            .GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Single(m =>
-                m.Name == nameof(Enumerable.ToList) &&
-                m.IsGenericMethodDefinition &&
-                m.GetParameters().Length == 1)
-            .MakeGenericMethod(resultType);
-
         return async (gridReader, buffered) =>
         {
             // Call ReadAsync<T>(buffered)
@@ -141,8 +133,7 @@ internal static class DapperExecutionHelper
             var resultProperty = taskType.GetProperty("Result")!;
             var enumerable = resultProperty.GetValue(task)!;
 
-            // Convert to list
-            return toListMethod.Invoke(null, [enumerable])!;
+            return enumerable;
         };
     }
 }

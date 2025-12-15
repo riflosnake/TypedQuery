@@ -76,6 +76,22 @@ public static class Extensions
         }
     }
 
+    public static DbContextOptionsBuilder<TContext> UseTypedQuery<TContext>(
+        this DbContextOptionsBuilder<TContext> options)
+        where TContext : DbContext
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        var extension =
+            options.Options.FindExtension<TypedQueryOptionsExtension>()
+            ?? new TypedQueryOptionsExtension();
+
+        ((IDbContextOptionsBuilderInfrastructure)options)
+            .AddOrUpdateExtension(extension);
+
+        return options;
+    }
+
     public static DbContextOptionsBuilder UseTypedQuery(
         this DbContextOptionsBuilder options)
     {
