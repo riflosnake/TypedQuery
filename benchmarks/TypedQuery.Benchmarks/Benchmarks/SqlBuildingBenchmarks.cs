@@ -1,7 +1,6 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
 using TypedQuery.Abstractions;
-using TypedQuery.Benchmarks.Infrastructure;
 using TypedQuery.Benchmarks.Queries;
 
 namespace TypedQuery.Benchmarks.Benchmarks;

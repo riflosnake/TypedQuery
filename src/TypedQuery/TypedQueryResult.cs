@@ -4,22 +4,26 @@ namespace TypedQuery;
 
 /// <summary>
 /// Contains the results of a TypedQuery batch execution.
-/// Results are stored in order and can be retrieved by index, result type, or query type.
+/// Results are stored in order and can be retrieved sequentially using Next() or by index.
 /// 
-/// When multiple queries return the same result type, use GetAll() to get all result sets
-/// or GetByIndex() to access specific result sets.
+/// Usage patterns:
+/// 1. Sequential access: Use Next&lt;T&gt;() to get each result set in order
+/// 2. By index: Use GetByIndex&lt;T&gt;(index) to get a specific result set
+/// 3. By type (first match): Use GetList&lt;T&gt;() to get the first result set of that type
 /// </summary>
 public sealed class TypedQueryResult
 {
     private readonly List<ResultSet> _orderedResults;
     private readonly Dictionary<Type, List<int>> _indexesByResultType;
     private readonly Dictionary<Type, int> _indexByQueryType;
+    private int _currentIndex;
 
     private TypedQueryResult(int capacity)
     {
         _orderedResults = new List<ResultSet>(capacity);
         _indexesByResultType = new Dictionary<Type, List<int>>(capacity);
         _indexByQueryType = new Dictionary<Type, int>(capacity);
+        _currentIndex = 0;
     }
 
     /// <summary>
@@ -60,20 +64,63 @@ public sealed class TypedQueryResult
     public int Count => _orderedResults.Count;
 
     /// <summary>
-    /// Gets ALL result sets for the specified result type, in order.
-    /// Use this when you have multiple queries returning the same type.
+    /// Gets the next result set in sequence.
+    /// Call this repeatedly to iterate through all result sets in order.
     /// </summary>
-    /// <typeparam name="T">The result type</typeparam>
-    /// <returns>An enumerable of result sets, each containing the results from one query</returns>
-    public IEnumerable<IEnumerable<T>> GetAll<T>()
+    /// <typeparam name="T">The expected result type</typeparam>
+    /// <returns>The next result set as an enumerable</returns>
+    /// <exception cref="InvalidOperationException">No more result sets available</exception>
+    /// <example>
+    /// var result = await conn.ToTypedQuery()
+    ///     .Add(new GetMakeByIdRaw(1))
+    ///     .Add(new GetMakeByIdRaw(2))
+    ///     .Add(new GetCountRaw())
+    ///     .ExecuteAsync();
+    /// 
+    /// var firstMake = result.Next&lt;MakeDto&gt;().FirstOrDefault();
+    /// var secondMake = result.Next&lt;MakeDto&gt;().FirstOrDefault();
+    /// var count = result.Next&lt;CountResult&gt;().First();
+    /// </example>
+    public IEnumerable<T> Next<T>()
     {
-        if (_indexesByResultType.TryGetValue(typeof(T), out var indexes))
+        if (_currentIndex >= _orderedResults.Count)
         {
-            foreach (var index in indexes)
-            {
-                yield return ConvertToEnumerable<T>(_orderedResults[index].Data);
-            }
+            throw new InvalidOperationException(
+                $"No more result sets available. Already retrieved {_currentIndex} of {_orderedResults.Count} result sets.");
         }
+
+        var data = _orderedResults[_currentIndex].Data;
+        _currentIndex++;
+        return ConvertToEnumerable<T>(data);
+    }
+
+    /// <summary>
+    /// Tries to get the next result set in sequence.
+    /// Returns false if no more result sets are available.
+    /// </summary>
+    /// <typeparam name="T">The expected result type</typeparam>
+    /// <param name="results">The next result set, or empty if none available</param>
+    /// <returns>True if a result set was retrieved, false if no more available</returns>
+    public bool TryNext<T>(out IEnumerable<T> results)
+    {
+        if (_currentIndex >= _orderedResults.Count)
+        {
+            results = Enumerable.Empty<T>();
+            return false;
+        }
+
+        var data = _orderedResults[_currentIndex].Data;
+        _currentIndex++;
+        results = ConvertToEnumerable<T>(data);
+        return true;
+    }
+
+    /// <summary>
+    /// Resets the sequential iterator to the beginning.
+    /// </summary>
+    public void Reset()
+    {
+        _currentIndex = 0;
     }
 
     /// <summary>
@@ -95,18 +142,18 @@ public sealed class TypedQueryResult
 
     /// <summary>
     /// Gets the FIRST result set for the specified result type as a list.
-    /// If you have multiple queries returning the same type, use GetAll() instead.
+    /// If you have multiple queries returning the same type, use Next() or GetByIndex() instead.
     /// </summary>
     /// <typeparam name="T">The result type</typeparam>
-    /// <returns>A read-only list of results from the first matching query</returns>
-    public IReadOnlyList<T> GetList<T>()
+    /// <returns>The results from the first matching query</returns>
+    public IEnumerable<T> GetList<T>()
     {
         if (_indexesByResultType.TryGetValue(typeof(T), out var indexes) && indexes.Count > 0)
         {
-            return ConvertToList<T>(_orderedResults[indexes[0]].Data);
+            return ConvertToEnumerable<T>(_orderedResults[indexes[0]].Data);
         }
 
-        return [];
+        return Enumerable.Empty<T>();
     }
 
     /// <summary>
@@ -212,32 +259,6 @@ public sealed class TypedQueryResult
         }
 
         return Enumerable.Empty<T>();
-    }
-
-    /// <summary>
-    /// Converts the stored data to a list.
-    /// </summary>
-    private static IReadOnlyList<T> ConvertToList<T>(object? data)
-    {
-        if (data == null)
-            return [];
-
-        if (data is IReadOnlyList<T> readOnlyList)
-        {
-            return readOnlyList;
-        }
-
-        if (data is IEnumerable<T> enumerable)
-        {
-            return enumerable.ToList();
-        }
-
-        if (data is T single)
-        {
-            return [single];
-        }
-
-        return [];
     }
 
     /// <summary>

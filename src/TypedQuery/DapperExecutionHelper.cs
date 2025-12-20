@@ -12,17 +12,8 @@ namespace TypedQuery;
 /// </summary>
 internal static class DapperExecutionHelper
 {
-    // Cache for ReadAsync<T> method info per result type
-    private static readonly ConcurrentDictionary<Type, MethodInfo> ReadAsyncMethodCache = new();
-    
-    // Generic ReadAsync method from GridReader
-    private static readonly MethodInfo GenericReadAsyncMethod = typeof(SqlMapper.GridReader)
-        .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-        .Single(m =>
-            m.Name == nameof(SqlMapper.GridReader.ReadAsync) &&
-            m.IsGenericMethodDefinition &&
-            m.GetParameters().Length == 1 &&
-            m.GetParameters()[0].ParameterType == typeof(bool));
+    // Cache for strongly-typed read delegates per result type
+    private static readonly ConcurrentDictionary<Type, Func<SqlMapper.GridReader, Task<object>>> ReadDelegateCache = new();
 
     /// <summary>
     /// Executes a SQL batch using Dapper's QueryMultipleAsync.
@@ -78,21 +69,41 @@ internal static class DapperExecutionHelper
 
     /// <summary>
     /// Reads a single result set from the grid reader.
-    /// Uses cached MethodInfo for performance.
+    /// Uses cached delegate for performance and to avoid reflection issues in production.
     /// </summary>
-    private static async Task<object> ReadResultSetAsync(
+    private static Task<object> ReadResultSetAsync(
         SqlMapper.GridReader gridReader,
         Type resultType)
     {
-        var method = ReadAsyncMethodCache.GetOrAdd(resultType, t => 
-            GenericReadAsyncMethod.MakeGenericMethod(t));
+        var readDelegate = ReadDelegateCache.GetOrAdd(resultType, CreateReadDelegate);
+        return readDelegate(gridReader);
+    }
 
-        // Invoke ReadAsync<T>(buffered: true)
-        var task = (Task)method.Invoke(gridReader, new object[] { true })!;
-        await task.ConfigureAwait(false);
+    /// <summary>
+    /// Creates a delegate that reads a result set of a specific type.
+    /// Uses a simple async wrapper to avoid DynamicMethod issues.
+    /// </summary>
+    private static Func<SqlMapper.GridReader, Task<object>> CreateReadDelegate(Type resultType)
+    {
+        // Create a generic method call via a helper that avoids DynamicMethod
+        var helperMethod = typeof(DapperExecutionHelper)
+            .GetMethod(nameof(ReadAsyncHelper), BindingFlags.NonPublic | BindingFlags.Static)!
+            .MakeGenericMethod(resultType);
 
-        // Get the Result property value (which is IEnumerable<T>)
-        var resultProperty = task.GetType().GetProperty("Result")!;
-        return resultProperty.GetValue(task)!;
+        // Create a delegate from the method
+        return (Func<SqlMapper.GridReader, Task<object>>)Delegate.CreateDelegate(
+            typeof(Func<SqlMapper.GridReader, Task<object>>),
+            helperMethod);
+    }
+
+    /// <summary>
+    /// Helper method that performs the actual read with proper generic typing.
+    /// This avoids the "Invalid type owner for DynamicMethod" error by using
+    /// a statically-defined method instead of expression compilation.
+    /// </summary>
+    private static async Task<object> ReadAsyncHelper<T>(SqlMapper.GridReader gridReader)
+    {
+        var result = await gridReader.ReadAsync<T>(buffered: true);
+        return result;
     }
 }
