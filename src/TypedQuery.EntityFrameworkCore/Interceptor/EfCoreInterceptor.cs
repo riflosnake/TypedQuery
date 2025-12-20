@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore.Diagnostics;
 using System.Collections.Concurrent;
+using System.Data;
 using System.Data.Common;
 using System.Reflection;
 
@@ -36,9 +37,6 @@ public sealed class TypedQueryInterceptor : DbCommandInterceptor
     
     // Pending compilation: queryId → query instance (for field-value matching)
     private static readonly ConcurrentDictionary<string, object> _pendingCompilations = new();
-    
-    // Provider factory cache
-    private static readonly ConcurrentDictionary<Type, DbProviderFactory> _factoryCache = new();
     
     private static long _queryIdCounter;
 
@@ -78,17 +76,6 @@ public sealed class TypedQueryInterceptor : DbCommandInterceptor
         _captures.TryRemove(queryId, out var c) ? c : null;
 
     /// <summary>
-    /// Get cached DbProviderFactory for connection type.
-    /// </summary>
-    internal static DbProviderFactory GetFactory(DbConnection connection)
-    {
-        var connType = connection.GetType();
-        return _factoryCache.GetOrAdd(connType, _ =>
-            DbProviderFactories.GetFactory(connection)
-                ?? throw new NotSupportedException($"No DbProviderFactory for {connType.Name}"));
-    }
-
-    /// <summary>
     /// Clear all caches. Useful for testing.
     /// </summary>
     public static void ClearAll()
@@ -120,10 +107,8 @@ public sealed class TypedQueryInterceptor : DbCommandInterceptor
         if (queryId is null)
             return result;
 
-        var factory = GetFactory(command.Connection!);
-        
         // Clone parameters
-        var clonedParams = CloneParameters(command.Parameters, factory);
+        var clonedParams = CloneParameters(command.Parameters);
         var captured = new CapturedQuery(command.CommandText, clonedParams);
         
         // Store for immediate retrieval
@@ -268,22 +253,25 @@ public sealed class TypedQueryInterceptor : DbCommandInterceptor
 
     #region Helpers
 
-    private static DbParameter[] CloneParameters(DbParameterCollection source, DbProviderFactory factory)
+    private static DbParameter[] CloneParameters(DbParameterCollection source)
     {
         var cloned = new DbParameter[source.Count];
         for (int i = 0; i < source.Count; i++)
         {
             var s = source[i];
-            var p = factory.CreateParameter()!;
-            p.ParameterName = s.ParameterName;
-            p.Value = s.Value ?? DBNull.Value;
-            p.DbType = s.DbType;
-            p.Direction = s.Direction;
-            p.Size = s.Size;
-            p.Precision = s.Precision;
-            p.Scale = s.Scale;
-            p.IsNullable = s.IsNullable;
-            cloned[i] = p;
+            // We need to create a generic parameter since we don't have the factory
+            // Just store the values we need
+            cloned[i] = new ClonedParameter
+            {
+                ParameterName = s.ParameterName,
+                Value = s.Value ?? DBNull.Value,
+                DbType = s.DbType,
+                Direction = s.Direction,
+                Size = s.Size,
+                Precision = s.Precision,
+                Scale = s.Scale,
+                IsNullable = s.IsNullable
+            };
         }
         return cloned;
     }
@@ -297,4 +285,39 @@ public sealed class TypedQueryInterceptor : DbCommandInterceptor
     }
 
     #endregion
+}
+
+/// <summary>
+/// Simple DbParameter implementation for storing cloned parameter values.
+/// </summary>
+internal sealed class ClonedParameter : DbParameter
+{
+    private DbType _dbType;
+    private ParameterDirection _direction;
+
+    public override DbType DbType 
+    { 
+        get => _dbType; 
+        set => _dbType = value; 
+    }
+    
+    public override ParameterDirection Direction 
+    { 
+        get => _direction; 
+        set => _direction = value; 
+    }
+    
+    public override bool IsNullable { get; set; }
+    public override string ParameterName { get; set; } = "";
+    public override int Size { get; set; }
+    public override string SourceColumn { get; set; } = "";
+    public override bool SourceColumnNullMapping { get; set; }
+    public override object? Value { get; set; }
+    public byte Precision { get; set; }
+    public byte Scale { get; set; }
+    
+    public override void ResetDbType() 
+    { 
+        _dbType = DbType.String; 
+    }
 }

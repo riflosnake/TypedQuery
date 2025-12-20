@@ -1,7 +1,6 @@
 using System.Data;
 using System.Data.Common;
 using TypedQuery.Abstractions;
-using TypedQuery.Internal;
 
 namespace TypedQuery;
 
@@ -55,9 +54,7 @@ public static class TypedQueryDbConnectionExtensions
 
         try
         {
-            var factory = ProviderFactoryCache.GetFactory(connection);
-
-            var batch = SqlBatchBuilder.Build(builder, context, factory);
+            var batch = SqlBatchBuilder.Build(builder, context);
 
             return await DapperExecutionHelper.ExecuteBatchAsync(
                 connection,

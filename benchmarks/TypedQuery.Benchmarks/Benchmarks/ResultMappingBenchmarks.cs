@@ -50,7 +50,7 @@ public class ResultMappingBenchmarks
             .Add(new GetProductByIdQuery(1))
             .ExecuteAsync();
         
-        return result.Get<ProductDto>();
+        return result.GetFirstOrDefault<ProductDto>();
     }
     
     // List result access

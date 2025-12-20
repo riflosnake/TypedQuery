@@ -1,4 +1,4 @@
-using System.Data.Common;
+using Dapper;
 
 namespace TypedQuery;
 
@@ -7,7 +7,7 @@ namespace TypedQuery;
 /// </summary>
 internal sealed record SqlBatch(
     string Sql,
-    IReadOnlyList<DbParameter> Parameters,
+    DynamicParameters Parameters,
     IReadOnlyList<Type> ResultTypes,
     IReadOnlyList<Type> QueryTypes
 );

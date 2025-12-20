@@ -1,167 +1,215 @@
 using TypedQuery.Abstractions;
 using TypedQuery.Internal;
-using System.Data.Common;
-using System.Runtime.CompilerServices;
+using Dapper;
 using System.Text;
+using System.Collections.Concurrent;
+using System.Reflection;
 
 namespace TypedQuery;
 
 /// <summary>
-/// Builds a SQL batch from multiple query registrations.
+/// Builds a SQL batch from multiple query definitions.
+/// Handles parameter uniqueness across batched queries.
+/// 
+/// Performance optimizations:
+/// - No regex - uses efficient char-by-char scanning
+/// - Caches PropertyInfo[] per anonymous type for parameter extraction
+/// - Pre-allocates StringBuilder capacity
 /// </summary>
 internal static class SqlBatchBuilder
 {
+    // Cache for anonymous type property accessors (eliminates repeated reflection)
+    private static readonly ConcurrentDictionary<Type, PropertyInfo[]> PropertyCache = new();
+
     /// <summary>
     /// Builds a SQL batch from the registered queries in the builder.
     /// </summary>
-    /// <param name="builder">The query builder containing registered queries</param>
-    /// <param name="context">The build context</param>
-    /// <returns>A SQL batch ready for execution</returns>
-    public static SqlBatch Build(
-        TypedQueryBuilder builder,
-        QueryBuildContext context,
-        DbProviderFactory factory)
+    public static SqlBatch Build(TypedQueryBuilder builder, QueryBuildContext context)
     {
         var itemCount = builder.Items.Count;
-
-        var sql = new StringBuilder(itemCount * 256);
-        var allParameters = new List<DbParameter>(itemCount * 4);
+        var sqlBuilder = new StringBuilder(itemCount * 256);
+        var mergedParameters = new DynamicParameters();
         var resultTypes = new List<Type>(itemCount);
         var queryTypes = new List<Type>(itemCount);
 
-        int queryIndex = 0;
-        foreach (var item in builder.Items)
+        for (int queryIndex = 0; queryIndex < itemCount; queryIndex++)
         {
+            var item = builder.Items[queryIndex];
             var definition = BuildMethodCache.InvokeBuild(item.QueryInstance, context);
 
-            if (definition.AnonymousParameters != null)
-            {
-                RewriteAnonymousParametersInPlace(
-                    sql, definition.Sql, definition.AnonymousParameters!, queryIndex,
-                    allParameters, factory);
-            }
-            else
-            {
-                RewriteParametersInPlace(
-                    sql, definition.Sql, definition.Parameters, queryIndex,
-                    allParameters, factory);
-            }
+            // Process this query's SQL and parameters
+            ProcessQuery(
+                definition.Sql,
+                definition.Parameters,
+                queryIndex,
+                sqlBuilder,
+                mergedParameters);
 
-            sql.Append(";\n");
+            sqlBuilder.Append(";\n");
 
             resultTypes.Add(item.ResultType);
             queryTypes.Add(item.QueryType);
-
-            queryIndex++;
         }
 
-        return new SqlBatch(sql.ToString(), allParameters, resultTypes, queryTypes);
+        return new SqlBatch(sqlBuilder.ToString(), mergedParameters, resultTypes, queryTypes);
     }
 
     /// <summary>
-    /// Rewrites parameter names for anonymous object parameters.
-    /// Converts anonymous object properties to provider-specific DbParameters with unique names.
+    /// Processes a single query: rewrites parameter names to be unique and adds to merged parameters.
+    /// Uses efficient char-by-char scanning instead of regex.
     /// </summary>
-    private static void RewriteAnonymousParametersInPlace(
-        StringBuilder sql,
-        string querySql,
-        object anonymousParams,
+    private static void ProcessQuery(
+        string sql,
+        object? parameters,
         int queryIndex,
-        List<DbParameter> allParameters,
-        DbProviderFactory factory)
+        StringBuilder output,
+        DynamicParameters mergedParameters)
     {
-        var paramDict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        
-        foreach (var prop in anonymousParams.GetType().GetProperties())
+        if (parameters == null)
         {
-            paramDict[prop.Name] = prop.GetValue(anonymousParams);
+            output.Append(sql);
+            return;
         }
+
+        // Extract parameter names and values from the object
+        var paramDict = ExtractParameters(parameters);
 
         if (paramDict.Count == 0)
         {
-            sql.Append(querySql);
+            output.Append(sql);
             return;
         }
 
-        var modifiedSql = querySql;
+        // Build prefix once
+        var prefix = $"p{queryIndex}_";
 
+        // Add all parameters with prefixed names
         foreach (var kvp in paramDict)
         {
-            var originalName = kvp.Key;
-            var value = kvp.Value;
-
-            var paramNameInSql = originalName.StartsWith('@') ? originalName : $"@{originalName}";
-            var cleanName = originalName.TrimStart('@', ':', '?');
-            var newName = $"@tql{queryIndex}_{cleanName}";
-
-            modifiedSql = modifiedSql.Replace(paramNameInSql, newName);
-
-            var p = factory.CreateParameter()
-                ?? throw new InvalidOperationException("Failed to create DbParameter");
-
-            p.ParameterName = newName;
-            p.Value = value ?? DBNull.Value;
-
-            allParameters.Add(p);
+            mergedParameters.Add(prefix + kvp.Key, kvp.Value);
         }
 
-        sql.Append(modifiedSql);
+        // Rewrite SQL parameter references using efficient char scanning
+        RewriteParameterReferences(sql, paramDict, prefix, output);
     }
 
     /// <summary>
-    /// Rewrites parameter names to make them unique across multiple queries.
-    /// Appends directly to the shared StringBuilder to reduce allocations.
+    /// Rewrites @paramName references in SQL to @p{index}_paramName.
+    /// Uses efficient char-by-char scanning - no regex.
     /// </summary>
-    private static void RewriteParametersInPlace(
-        StringBuilder sql,
-        string querySql,
-        IReadOnlyList<DbParameter> parameters,
-        int queryIndex,
-        List<DbParameter> allParameters,
-        DbProviderFactory factory)
+    private static void RewriteParameterReferences(
+        string sql,
+        Dictionary<string, object?> paramDict,
+        string prefix,
+        StringBuilder output)
     {
-        if (parameters.Count == 0)
-        {
-            sql.Append(querySql);
-            return;
-        }
+        var length = sql.Length;
+        var i = 0;
 
-        var modifiedSql = querySql;
-        
-        foreach (var source in parameters)
+        while (i < length)
         {
-            var originalName = source.ParameterName;
-            
-            var startIndex = 0;
-            while (startIndex < originalName.Length && IsParameterPrefix(originalName[startIndex]))
+            var c = sql[i];
+
+            if (c == '@')
             {
-                startIndex++;
+                // Found potential parameter, extract the name
+                var start = i + 1;
+                var end = start;
+
+                // Scan for valid identifier characters: letters, digits, underscore
+                while (end < length && IsIdentifierChar(sql[end]))
+                {
+                    end++;
+                }
+
+                if (end > start)
+                {
+                    var paramName = sql.Substring(start, end - start);
+
+                    // Check if this is one of our parameters (case-insensitive)
+                    if (paramDict.ContainsKey(paramName))
+                    {
+                        // Write the rewritten parameter
+                        output.Append('@');
+                        output.Append(prefix);
+                        output.Append(paramName);
+                        i = end;
+                        continue;
+                    }
+                }
+
+                // Not our parameter, write as-is
+                output.Append(c);
+                i++;
             }
-            
-            var cleanName = startIndex > 0 ? originalName.Substring(startIndex) : originalName;
-            
-            var newName = string.Concat("@tql", queryIndex.ToString(), "_", cleanName);
-
-            modifiedSql = modifiedSql.Replace(originalName, newName);
-
-            var p = factory.CreateParameter()
-                ?? throw new InvalidOperationException("Failed to create DbParameter");
-
-            p.ParameterName = newName;
-            p.Value = source.Value ?? DBNull.Value;
-            p.DbType = source.DbType;
-            p.Direction = source.Direction;
-            p.Size = source.Size;
-            p.Precision = source.Precision;
-            p.Scale = source.Scale;
-            p.IsNullable = source.IsNullable;
-
-            allParameters.Add(p);
+            else
+            {
+                output.Append(c);
+                i++;
+            }
         }
-
-        sql.Append(modifiedSql);
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool IsParameterPrefix(char c) => c == '@' || c == ':' || c == '?';
+    /// <summary>
+    /// Checks if a character is valid in a SQL parameter identifier.
+    /// </summary>
+    private static bool IsIdentifierChar(char c)
+    {
+        return char.IsLetterOrDigit(c) || c == '_';
+    }
+
+    /// <summary>
+    /// Extracts parameters from an anonymous object, dictionary, or DynamicParameters.
+    /// Uses cached PropertyInfo[] for anonymous types to minimize reflection overhead.
+    /// </summary>
+    private static Dictionary<string, object?> ExtractParameters(object parameters)
+    {
+        var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+
+        if (parameters is DynamicParameters dp)
+        {
+            foreach (var name in dp.ParameterNames)
+            {
+                result[name] = dp.Get<object?>(name);
+            }
+        }
+        else if (parameters is IDictionary<string, object?> dict)
+        {
+            foreach (var kvp in dict)
+            {
+                result[kvp.Key] = kvp.Value;
+            }
+        }
+        else if (parameters is System.Collections.IDictionary legacyDict)
+        {
+            foreach (System.Collections.DictionaryEntry entry in legacyDict)
+            {
+                if (entry.Key is string key)
+                {
+                    result[key] = entry.Value;
+                }
+            }
+        }
+        else
+        {
+            // Anonymous object - use cached properties
+            var type = parameters.GetType();
+            var properties = PropertyCache.GetOrAdd(type, t => t.GetProperties());
+            
+            foreach (var prop in properties)
+            {
+                result[prop.Name] = prop.GetValue(parameters);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Clears the property cache. Useful for testing.
+    /// </summary>
+    internal static void ClearCache()
+    {
+        PropertyCache.Clear();
+    }
 }
