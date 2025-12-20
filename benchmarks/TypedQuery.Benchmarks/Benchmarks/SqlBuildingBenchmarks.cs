@@ -1,6 +1,5 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
-using Microsoft.Data.Sqlite;
 using TypedQuery.Abstractions;
 using TypedQuery.Benchmarks.Infrastructure;
 using TypedQuery.Benchmarks.Queries;
@@ -21,13 +20,11 @@ public class SqlBuildingBenchmarks
     private TypedQueryBuilder _builder10 = null!;
     private TypedQueryBuilder _builder20 = null!;
     private QueryBuildContext _context = null!;
-    private SqliteFactory _factory = null!;
     
     [GlobalSetup]
     public void Setup()
     {
         _context = new QueryBuildContext(null);
-        _factory = SqliteFactory.Instance;
         
         // Pre-build query builders with different query counts
         _builder1 = new TypedQueryBuilder();
@@ -55,25 +52,25 @@ public class SqlBuildingBenchmarks
     [Benchmark(Baseline = true)]
     public object BuildBatch_1Query()
     {
-        return SqlBatchBuilder.Build(_builder1, _context, _factory);
+        return SqlBatchBuilder.Build(_builder1, _context);
     }
     
     [Benchmark]
     public object BuildBatch_5Queries()
     {
-        return SqlBatchBuilder.Build(_builder5, _context, _factory);
+        return SqlBatchBuilder.Build(_builder5, _context);
     }
     
     [Benchmark]
     public object BuildBatch_10Queries()
     {
-        return SqlBatchBuilder.Build(_builder10, _context, _factory);
+        return SqlBatchBuilder.Build(_builder10, _context);
     }
     
     [Benchmark]
     public object BuildBatch_20Queries()
     {
-        return SqlBatchBuilder.Build(_builder20, _context, _factory);
+        return SqlBatchBuilder.Build(_builder20, _context);
     }
     
     // Test with varying parameter counts
@@ -86,7 +83,7 @@ public class SqlBuildingBenchmarks
         {
             builder.AddInstance(new GetActiveProductsQuery());
         }
-        return SqlBatchBuilder.Build(builder, _context, _factory);
+        return SqlBatchBuilder.Build(builder, _context);
     }
     
     [Benchmark]
@@ -97,7 +94,7 @@ public class SqlBuildingBenchmarks
         {
             builder.AddInstance(new GetProductByIdQuery(i + 1));
         }
-        return SqlBatchBuilder.Build(builder, _context, _factory);
+        return SqlBatchBuilder.Build(builder, _context);
     }
     
     [Benchmark]
@@ -108,7 +105,7 @@ public class SqlBuildingBenchmarks
         {
             builder.AddInstance(new GetProductsMultiFilterQuery(1, 10m, 500m, true, 5));
         }
-        return SqlBatchBuilder.Build(builder, _context, _factory);
+        return SqlBatchBuilder.Build(builder, _context);
     }
     
     [Benchmark]
@@ -121,6 +118,6 @@ public class SqlBuildingBenchmarks
                 1, 10m, 500m, true, 5,
                 "%Product%", DateTime.UtcNow.AddYears(-1), DateTime.UtcNow, 0, 50));
         }
-        return SqlBatchBuilder.Build(builder, _context, _factory);
+        return SqlBatchBuilder.Build(builder, _context);
     }
 }

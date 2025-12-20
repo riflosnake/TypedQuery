@@ -1,6 +1,5 @@
 using TypedQuery.Abstractions;
 using TypedQuery.EntityFrameworkCore.Interceptor;
-using TypedQuery.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -53,9 +52,7 @@ public static class Extensions
 
         try
         {
-            var factory = ProviderFactoryCache.GetFactory(connection);
-
-            var batch = SqlBatchBuilder.Build(builder, context, factory);
+            var batch = SqlBatchBuilder.Build(builder, context);
 
             var currentTransaction = dbContext.Database.CurrentTransaction;
             var transaction = currentTransaction?.GetDbTransaction();

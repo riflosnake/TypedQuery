@@ -1,6 +1,7 @@
 ﻿using TypedQuery.Abstractions;
 using TypedQuery.EntityFrameworkCore.Interceptor;
 using Microsoft.EntityFrameworkCore;
+using Dapper;
 
 namespace TypedQuery.EntityFrameworkCore;
 
@@ -46,9 +47,7 @@ public interface ITypedQuery<TDbContext, TResult> : ITypedQuery<TResult>
             if (template != null)
             {
                 // Skip EF Core entirely - build parameters from fields, use cached SQL
-                var connection = dbContext.Database.GetDbConnection();
-                var factory = TypedQueryInterceptor.GetFactory(connection);
-                var parameters = template.BuildParameters(this, factory);
+                var parameters = template.BuildParameters(this);
                 return new QueryDefinition(template.Sql, parameters);
             }
             // template is null = not compilable, fall through to Mode A
@@ -69,6 +68,7 @@ public interface ITypedQuery<TDbContext, TResult> : ITypedQuery<TResult>
                 $"SQL capture failed for {queryType.Name}. " +
                 "Ensure UseTypedQuery() is configured.");
 
-        return new QueryDefinition(captured.Sql, captured.Parameters);
+        // Convert captured DbParameters to DynamicParameters for Dapper
+        return new QueryDefinition(captured.Sql, captured.ToDynamicParameters());
     }
 }

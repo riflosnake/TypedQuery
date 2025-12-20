@@ -12,7 +12,17 @@ namespace TypedQuery;
 /// </summary>
 internal static class DapperExecutionHelper
 {
-    private static readonly ConcurrentDictionary<Type, Func<SqlMapper.GridReader, bool, Task<object>>> ReadAsyncDelegateCache = new();
+    // Cache for ReadAsync<T> method info per result type
+    private static readonly ConcurrentDictionary<Type, MethodInfo> ReadAsyncMethodCache = new();
+    
+    // Generic ReadAsync method from GridReader
+    private static readonly MethodInfo GenericReadAsyncMethod = typeof(SqlMapper.GridReader)
+        .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+        .Single(m =>
+            m.Name == nameof(SqlMapper.GridReader.ReadAsync) &&
+            m.IsGenericMethodDefinition &&
+            m.GetParameters().Length == 1 &&
+            m.GetParameters()[0].ParameterType == typeof(bool));
 
     /// <summary>
     /// Executes a SQL batch using Dapper's QueryMultipleAsync.
@@ -24,44 +34,24 @@ internal static class DapperExecutionHelper
         int? commandTimeout = null,
         CancellationToken cancellationToken = default)
     {
-        var parameters = CreateDynamicParameters(batch.Parameters);
-
         using var gridReader = await connection.QueryMultipleAsync(
             new CommandDefinition(
                 batch.Sql,
-                parameters,
+                batch.Parameters,
                 transaction,
                 commandTimeout,
                 CommandType.Text,
                 cancellationToken: cancellationToken));
 
         return await ReadResultsAsync(
-            gridReader, batch.ResultTypes, batch.QueryTypes,
+            gridReader, 
+            batch.ResultTypes, 
+            batch.QueryTypes,
             cancellationToken);
     }
 
     /// <summary>
-    /// Creates DynamicParameters from DbParameter collection.
-    /// </summary>
-    private static DynamicParameters CreateDynamicParameters(IReadOnlyList<DbParameter> parameters)
-    {
-        var dynamicParams = new DynamicParameters();
-        
-        foreach (var param in parameters)
-        {
-            dynamicParams.Add(
-                param.ParameterName,
-                param.Value,
-                param.DbType,
-                param.Direction,
-                param.Size);
-        }
-
-        return dynamicParams;
-    }
-
-    /// <summary>
-    /// Reads all result sets from the GridReader using Dapper.
+    /// Reads all result sets from the GridReader.
     /// </summary>
     private static async Task<TypedQueryResult> ReadResultsAsync(
         SqlMapper.GridReader gridReader,
@@ -87,53 +77,22 @@ internal static class DapperExecutionHelper
     }
 
     /// <summary>
-    /// Reads a single result set from the grid reader using compiled delegates.
+    /// Reads a single result set from the grid reader.
+    /// Uses cached MethodInfo for performance.
     /// </summary>
     private static async Task<object> ReadResultSetAsync(
         SqlMapper.GridReader gridReader,
         Type resultType)
     {
-        var readDelegate = ReadAsyncDelegateCache.GetOrAdd(resultType, CreateReadDelegate);
+        var method = ReadAsyncMethodCache.GetOrAdd(resultType, t => 
+            GenericReadAsyncMethod.MakeGenericMethod(t));
 
-        return await readDelegate(gridReader, true);
-    }
+        // Invoke ReadAsync<T>(buffered: true)
+        var task = (Task)method.Invoke(gridReader, new object[] { true })!;
+        await task.ConfigureAwait(false);
 
-    /// <summary>
-    /// Creates a compiled delegate for reading a specific result type from GridReader.
-    /// This eliminates all reflection overhead after first call.
-    /// </summary>
-    private static Func<SqlMapper.GridReader, bool, Task<object>> CreateReadDelegate(Type resultType)
-    {
-        var readAsyncMethod = typeof(SqlMapper.GridReader)
-            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .Single(m =>
-                m.Name == nameof(SqlMapper.GridReader.ReadAsync) &&
-                m.IsGenericMethodDefinition &&
-                m.GetParameters().Length == 1 &&
-                m.GetParameters()[0].ParameterType == typeof(bool));
-
-        var genericReadAsync = readAsyncMethod.MakeGenericMethod(resultType);
-
-        // Create: async (gridReader, buffered) => {
-        //     var result = await gridReader.ReadAsync<T>(buffered);
-        //     return result.ToList();
-        // }
-        
-        // Since we need async/await, we'll create the delegate differently
-        // We'll return a function that does the work
-        
-        return async (gridReader, buffered) =>
-        {
-            // Call ReadAsync<T>(buffered)
-            var task = (Task)genericReadAsync.Invoke(gridReader, [buffered])!;
-            await task.ConfigureAwait(false);
-
-            // Get the result from the task
-            var taskType = task.GetType();
-            var resultProperty = taskType.GetProperty("Result")!;
-            var enumerable = resultProperty.GetValue(task)!;
-
-            return enumerable;
-        };
+        // Get the Result property value (which is IEnumerable<T>)
+        var resultProperty = task.GetType().GetProperty("Result")!;
+        return resultProperty.GetValue(task)!;
     }
 }
