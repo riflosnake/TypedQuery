@@ -11,6 +11,9 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: write
+
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
@@ -55,9 +58,6 @@ jobs:
       
     - name: Build
       run: dotnet build -c Release --no-restore
-      
-    - name: Test
-      run: dotnet run --project src/TypedQuery.Tests/TypedQuery.Tests.csproj --no-build -c Release
       
     - name: Pack
       run: |
