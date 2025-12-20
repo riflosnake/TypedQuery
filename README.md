@@ -1,6 +1,7 @@
 # TypedQuery
 
 [![NuGet](https://img.shields.io/nuget/v/TypedQuery.svg)](https://www.nuget.org/packages/TypedQuery)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/TypedQuery.svg)](https://www.nuget.org/packages/TypedQuery)
 [![License](https://img.shields.io/github/license/riflosnake/TypedQuery.svg)](LICENSE)
 
 A high-performant .NET library for **batching multiple database queries into a single roundtrip** with type-safe, reusable query definitions.
